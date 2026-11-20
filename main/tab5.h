@@ -9,6 +9,12 @@ void vga_task(void *arg);
 int lcd_strip_count(void);
 /* copies one strip of the emulator frame buffer to the panel (with rotation) */
 void lcd_present_strip(const uint16_t *src_fb, int strip);
+/* width of the black bar on each side of the picture (landscape pixels), 0 if
+   none (or too narrow for the disk LEDs) */
+int lcd_bar_width(void);
+
+/* touch_tab5.c: touch screen as a touchpad on the PS/2 mouse */
+void touch_start(void);
 
 /* audio_tab5.c */
 void audio_start(void);

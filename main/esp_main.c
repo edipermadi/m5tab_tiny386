@@ -345,6 +345,9 @@ void app_main(void)
     ESP_LOGI(TAG, "config: %s", config.filename);
 
     tab5_kbd_start();
+#if CONFIG_TAB5_TOUCHPAD
+    touch_start();
+#endif
     if (config.enable_usb) {
         usb_setup();
     }

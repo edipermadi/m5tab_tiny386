@@ -78,6 +78,26 @@ menu "tiny386 on M5Stack Tab5"
             Unit of the cache and of read-ahead: a miss reads this much from
             the card.
 
+    config TAB5_TOUCHPAD
+        bool "Touch screen as a touchpad (PS/2 mouse)"
+        default y
+        help
+            The picture area works as a touchpad: slide to move the pointer,
+            tap for a left click, two-finger tap for a right click. The black
+            bars beside a 4:3 picture are the mouse buttons: left bar = left
+            button, right bar = right button, held while touched. Needs no
+            driver in the guest. GT911 (ILI9881C panel) or ST7123/ST7121
+            panel touch.
+
+    config TAB5_TOUCHPAD_SPEED
+        int "Touchpad speed (%)"
+        depends on TAB5_TOUCHPAD
+        range 25 400
+        default 100
+        help
+            Mouse movement per panel pixel the finger moves, in percent.
+            Windows' own pointer speed applies on top.
+
     config TAB5_KBD_ENABLE
         bool "M5Stack Tab5 Keyboard (I2C)"
         default y

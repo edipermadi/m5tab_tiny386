@@ -56,6 +56,16 @@ typedef enum {
  * sequence (LCD/touch reset, EXT5V, USB-A 5V, Wi-Fi power, charger). */
 esp_err_t bsp_i2c_init(i2c_master_bus_handle_t *ret_bus);
 
+/* Touch (bsp_touch.c): GT911 (ILI9881C panel) or ST712x (ST7123/ST7121
+ * panels), found by probing. Points in panel coordinates (portrait). */
+typedef struct {
+    int id;             /* stays the same while the finger stays down */
+    uint16_t x, y;
+} bsp_touch_point_t;
+esp_err_t bsp_touch_init(void);
+/* the fingers down now: 0..max, or -1 for no new report (keep the last) */
+int bsp_touch_read_points(bsp_touch_point_t *pts, int max);
+
 /* Speaker amplifier on/off (I/O expander). */
 void bsp_audio_amp_set(bool on);
 

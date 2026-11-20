@@ -328,6 +328,11 @@ void lcd_present_strip(const uint16_t *src_fb, int strip)
     esp_lcd_panel_draw_bitmap(globals.panel, 0, y0, FB_W, y0 + STRIP_ROWS, dst);
 }
 
+int lcd_bar_width(void)
+{
+    return s_bar_w;
+}
+
 int lcd_strip_count(void)
 {
     return NSTRIPS;
