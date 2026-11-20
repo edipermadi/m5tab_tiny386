@@ -36,3 +36,8 @@ int64_t hdd_sector_count(HddImage *h);
 /* n sectors from sector on; 0, or -1 on an error or out of range */
 int hdd_read(HddImage *h, uint64_t sector, uint8_t *buf, int n);
 int hdd_write(HddImage *h, uint64_t sector, const uint8_t *buf, int n);
+
+/* Milliseconds since the guest last read (write false) or wrote (write true)
+   a hard disk image (cd false: opened writable) or a CD image (cd true: read-
+   only); UINT32_MAX if it never has. For the disk activity indicator. */
+uint32_t hdd_idle_ms(bool cd, bool write);

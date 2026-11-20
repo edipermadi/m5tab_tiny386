@@ -8,6 +8,7 @@
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "esp_private/esp_cache_private.h" /* esp_cache_get_alignment(), as the SD driver uses */
 #include "sdmmc_cmd.h"
 #include "ff.h"
@@ -70,6 +71,24 @@ static uint8_t *stage; /* DMA-aligned bounce for the callers' buffers */
 static size_t dma_align;
 
 static uint32_t stat_hits, stat_misses;
+
+/* last guest access, in ms since boot (+1, so 0 is "never"):
+   [cd][write]; written on the emulator's core, read on the display's */
+static volatile uint32_t last_access[2][2];
+
+static void note_access(HddImage *h, bool write)
+{
+    last_access[!h->writable][write] = (uint32_t)(esp_timer_get_time() / 1000) + 1;
+}
+
+uint32_t hdd_idle_ms(bool cd, bool write)
+{
+    uint32_t t = last_access[cd][write];
+    if (!t) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)(esp_timer_get_time() / 1000) + 1 - t;
+}
 
 /* ------------------------------------------------------------ setup */
 
@@ -367,6 +386,7 @@ int hdd_read(HddImage *h, uint64_t sector, uint8_t *buf, int n)
     if (n < 0 || sector + n > h->nsect) {
         return -1;
     }
+    note_access(h, false);
     uint32_t s = sector;
     while (n) {
         int k;
@@ -401,6 +421,7 @@ int hdd_write(HddImage *h, uint64_t sector, const uint8_t *buf, int n)
     if (!h->writable || n < 0 || sector + n > h->nsect) {
         return -1;
     }
+    note_access(h, true);
     uint32_t s = sector;
     while (n) {
         int k = n < STAGE_SECTS ? n : STAGE_SECTS;

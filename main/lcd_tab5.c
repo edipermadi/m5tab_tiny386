@@ -26,6 +26,7 @@
 #include "tab5.h"
 #include "common.h"
 #include "../tiny386/pc.h"
+#include "hdd_cache.h"
 
 static const char *TAG = "lcd";
 
@@ -72,6 +73,22 @@ static uint8_t s_colw[FB_W];
 static int s_pic_w = -1, s_pic_h = -1;
 static bool s_identity = true;
 
+/*
+ * Disk activity LEDs, drawn in the black bars left and right of a picture
+ * narrower than the panel, near the bottom: hard disk on the left (green
+ * read, amber write), CD-ROM on the right (green read), dim grey when idle.
+ * Each access keeps its LED lit for LED_HOLD_MS so short ones show.
+ */
+#define LED_SIZE     20     /* square, landscape pixels */
+#define LED_BOTTOM   40     /* gap below it */
+#define LED_HOLD_MS  80
+#define LED_IDLE     0x2945 /* dim grey */
+#define LED_READ     0x07E0 /* green */
+#define LED_WRITE    0xFD20 /* amber */
+
+static int s_bar_w;         /* width of each side bar; 0: no room for LEDs */
+static uint16_t s_led[2];   /* this frame's colours: [0] left/HDD, [1] right/CD */
+
 /* panel pixel u of n over a source run of m pixels (n >= m): first source
    pixel and the weight of the next one */
 static void area_map(int u, int n, int m, int base, int16_t *idx, uint8_t *wt)
@@ -112,8 +129,16 @@ static void build_maps(int w, int h)
         }
     }
     if (s_identity) {
+        s_bar_w = (w > 0 && w < LW) ? (LW - w) / 2 : 0;
+        if (s_bar_w < LED_SIZE + 8) {
+            s_bar_w = 0;
+        }
         ESP_LOGI(TAG, "picture %dx%d: unscaled", w, h);
         return;
+    }
+    s_bar_w = (LW - ow) / 2;
+    if (s_bar_w < LED_SIZE + 8) {
+        s_bar_w = 0;
     }
     ESP_LOGI(TAG, "picture %dx%d: scaled to %dx%d", w, h, ow, oh);
 
@@ -206,6 +231,45 @@ static const uint16_t *scaled_line(const uint16_t *src_fb, int r, int keep)
     return s_line[i];
 }
 
+static void led_update(void)
+{
+    if (!s_bar_w) {
+        return;
+    }
+    s_led[0] = hdd_idle_ms(false, true) < LED_HOLD_MS  ? LED_WRITE
+             : hdd_idle_ms(false, false) < LED_HOLD_MS ? LED_READ : LED_IDLE;
+    s_led[1] = hdd_idle_ms(true, false) < LED_HOLD_MS ? LED_READ : LED_IDLE;
+}
+
+/* the LEDs' part of panel row y (already drawn: bar pixels are black) */
+static void led_draw(uint16_t *d, int y)
+{
+    const int LW = FB_H, LH = FB_W;
+#if CONFIG_TAB5_ROTATION_90
+    int X = y;
+#else
+    int X = LW - 1 - y;
+#endif
+    int lx = s_bar_w / 2 - LED_SIZE / 2;
+    int side;
+    if (X >= lx && X < lx + LED_SIZE) {
+        side = 0;
+    } else if (X >= LW - lx - LED_SIZE && X < LW - lx) {
+        side = 1;
+    } else {
+        return;
+    }
+    int y1 = LH - LED_BOTTOM, y0 = y1 - LED_SIZE; /* landscape rows [y0, y1) */
+#if CONFIG_TAB5_ROTATION_90
+    int c0 = LH - y1, c1 = LH - y0;
+#else
+    int c0 = y0, c1 = y1;
+#endif
+    for (int c = c0; c < c1; c++) {
+        d[c] = s_led[side];
+    }
+}
+
 void lcd_present_strip(const uint16_t *src_fb, int strip)
 {
     if (!s_panel_fb) {
@@ -222,6 +286,7 @@ void lcd_present_strip(const uint16_t *src_fb, int strip)
             }
         }
         s_line_src[0] = s_line_src[1] = -1; /* a new frame */
+        led_update();
     }
     int y0 = strip * STRIP_ROWS;
     uint16_t *dst = s_panel_fb + (size_t)y0 * FB_W;
@@ -235,11 +300,17 @@ void lcd_present_strip(const uint16_t *src_fb, int strip)
             int sy = FB_H - 1 - y;
 #endif
             copy_row(d, src_fb + (size_t)sy * FB_W);
+            if (s_bar_w) {
+                led_draw(d, y);
+            }
             continue;
         }
         int sr = s_row[y], w = s_roww[y];
         if (sr < 0) {
             memset(d, 0, FB_W * sizeof(uint16_t));
+            if (s_bar_w) {
+                led_draw(d, y); /* (LEDs are only ever in the bars) */
+            }
         } else if (r > 0 && sr == s_row[y - 1] && w == s_roww[y - 1]) {
             memcpy(d, d - FB_W, FB_W * sizeof(uint16_t)); /* a repeated line */
         } else if (!w) {
