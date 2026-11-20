@@ -1,0 +1,11 @@
+# M5Stack Tab5, 16 MB flash.
+# ROMs and disk images normally live on the microSD card (/sdcard, see tiny386.ini).
+# Without a card, the "storage" FAT partition is mounted at /spiflash instead.
+# A tiny386.ini rom entry without a leading '/' names a flash partition (e.g. bios = bios.bin).
+# Name,          Type, SubType,   Offset,   Size,  Flags
+nvs,             data, nvs,       0x9000,   24K,
+phy_init,        data, phy,       0xf000,   4K,
+factory,         app,  factory,   0x10000,  3M,
+bios.bin,        data, undefined, ,         128K,
+vgabios.bin,     data, undefined, ,         64K,
+storage,         data, fat,       ,         0xCC0000,

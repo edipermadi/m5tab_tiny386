@@ -1,0 +1,61 @@
+menu "tiny386 on M5Stack Tab5"
+
+    choice TAB5_ROTATION
+        prompt "Screen orientation"
+        default TAB5_ROTATION_270
+        help
+            The 720x1280 portrait panel is used in landscape. Pick the
+            orientation that is upright with the Tab5 Keyboard attached; if the
+            picture is upside down, switch to the other one.
+
+        config TAB5_ROTATION_90
+            bool "Landscape, rotated 90 degrees"
+        config TAB5_ROTATION_270
+            bool "Landscape, rotated 270 degrees"
+    endchoice
+
+    config TAB5_BACKLIGHT_PERCENT
+        int "Backlight brightness (%)"
+        range 5 100
+        default 60
+
+    config TAB5_PSRAM_POOL_MB
+        int "PSRAM pool for the emulator (MB)"
+        range 8 28
+        default 24
+        help
+            Guest RAM (mem_size in tiny386.ini), VGA RAM and the 1280x720
+            console frame buffer are carved out of this pool.
+
+    config TAB5_KBD_ENABLE
+        bool "M5Stack Tab5 Keyboard (I2C)"
+        default y
+
+    config TAB5_KBD_I2C_PORT
+        int "Tab5 Keyboard I2C port"
+        depends on TAB5_KBD_ENABLE
+        range 0 1
+        default 0
+        help
+            Port 1 is the Tab5's internal SYS bus, so the keyboard uses port 0.
+
+    config TAB5_KBD_SDA_GPIO
+        int "Tab5 Keyboard SDA GPIO"
+        depends on TAB5_KBD_ENABLE
+        default 0
+
+    config TAB5_KBD_SCL_GPIO
+        int "Tab5 Keyboard SCL GPIO"
+        depends on TAB5_KBD_ENABLE
+        default 1
+
+    config TAB5_KBD_I2C_ADDR
+        hex "Tab5 Keyboard I2C address"
+        depends on TAB5_KBD_ENABLE
+        default 0x6D
+
+    config TAB5_USB_HOST
+        bool "USB host on the USB-A port (mouse, keyboard)"
+        default y
+
+endmenu
