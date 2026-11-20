@@ -8,14 +8,13 @@ A port of [tiny386](https://github.com/hchunhui/tiny386) (an i386 PC emulator th
 - **Sound:** PC speaker, Sound Blaster 16 and AdLib, played through the ES8388 codec and the built-in speaker.
 - **Storage:** the microSD card holds the configuration, BIOS images and disk images.
 
-The board support (power and I/O expanders, panel, backlight, audio) comes from the esp32p4_86box BSP. tiny386 is a git submodule, and its sources are built unmodified.
+The board support (power and I/O expanders, panel, backlight, audio) comes from the esp32p4_86box BSP. tiny386 is vendored in `tiny386/` (see `tiny386/VENDORED.md` for the upstream commit and the local changes).
 
 ## Building
 
 You need ESP-IDF 6.x (tested with 6.1). No ESP-IDF patches are required.
 
 ```sh
-git submodule update --init
 idf.py build
 idf.py -p /dev/ttyACM0 flash monitor
 ```
@@ -71,5 +70,5 @@ Without a card, the firmware mounts the `storage` FAT partition in flash at `/sp
 
 ## Licenses
 
-- tiny386: BSD-3-Clause (submodule)
+- tiny386: BSD-3-Clause (vendored in `tiny386/`)
 - `main/bsp/`: from esp32p4_86box (MIT). The Tab5 panel init tables come from M5Stack (Apache-2.0).

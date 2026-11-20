@@ -1,6 +1,6 @@
 /*
  * Fast, cached disk image access for tiny386's ide.c (force-included into
- * ide.c only, see main/CMakeLists.txt; the submodule is left untouched).
+ * ide.c only, see main/CMakeLists.txt; ide.c itself is unchanged).
  *
  * ide.c reads and writes its disk images with fopen/fseeko/fread/fwrite. On
  * this board that path is slow:
