@@ -150,6 +150,50 @@ static void redraw(void *opaque, int x, int y, int w, int h)
     }
 }
 
+/* CMOS through its own ports (the struct is private to tiny386's misc.c) */
+static uint8_t cmos_rd(CMOS *c, int reg)
+{
+    cmos_ioport_write(c, 0x70, reg);
+    return cmos_ioport_read(c, 0x71);
+}
+
+static void cmos_wr(CMOS *c, int reg, uint8_t val)
+{
+    cmos_ioport_write(c, 0x70, reg);
+    cmos_ioport_write(c, 0x71, val);
+}
+
+/*
+ * tiny386 puts the memory size only in CMOS 0x30/0x31 (0x34/0x35 from 64 MB):
+ * enough for SeaBIOS, but the standard base and extended memory registers stay
+ * 0, with no checksum over them. Windows 95 setup reads those and stops with
+ * "not enough memory". Fill them in as a real BIOS setup would.
+ */
+static void cmos_fill_memory(CMOS *c, long mem_size)
+{
+    long ext_kb = mem_size / 1024 - 1024;
+    if (ext_kb < 0) {
+        ext_kb = 0;
+    } else if (ext_kb > 0xffff) {
+        ext_kb = 0xffff;
+    }
+    cmos_wr(c, 0x15, 640 & 0xff); /* base memory, KB */
+    cmos_wr(c, 0x16, 640 >> 8);
+    cmos_wr(c, 0x17, ext_kb & 0xff); /* extended memory, KB */
+    cmos_wr(c, 0x18, ext_kb >> 8);
+    if (!cmos_rd(c, 0x30) && !cmos_rd(c, 0x31)) { /* (left 0 from 64 MB) */
+        cmos_wr(c, 0x30, ext_kb & 0xff);
+        cmos_wr(c, 0x31, ext_kb >> 8);
+    }
+    unsigned sum = 0; /* checksum of 0x10-0x2d, big-endian in 0x2e/0x2f */
+    for (int r = 0x10; r <= 0x2d; r++) {
+        sum += cmos_rd(c, r);
+    }
+    cmos_wr(c, 0x2e, sum >> 8);
+    cmos_wr(c, 0x2f, sum & 0xff);
+    cmos_ioport_write(c, 0x70, 0);
+}
+
 static int pc_main(const char *file)
 {
     PCConfig conf;
@@ -175,6 +219,7 @@ static int pc_main(const char *file)
     Console *console = console_init();
     PC *pc = pc_new(redraw, console, console->fb, &conf);
     console->pc = pc;
+    cmos_fill_memory(pc->cmos, conf.mem_size);
     globals.pc = pc;
     globals.kbd = pc->kbd;
     globals.mouse = pc->mouse;

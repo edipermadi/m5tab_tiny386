@@ -36,6 +36,7 @@ idf_component_register(
         "lcd_tab5.c"
         "audio_tab5.c"
         "storage_tab5.c"
+        "hdd_cache.c"
         "kbd_tab5.c"
         "bsp/bsp_power.c"
         "bsp/bsp_display_tab5.c"
@@ -65,7 +66,7 @@ idf_component_register(
     INCLUDE_DIRS "." "${T386}/esp/main" "${FMOPL_GEN_DIR}"
     REQUIRES
         esp_lcd esp_driver_i2c esp_driver_i2s esp_driver_ledc esp_driver_gpio
-        esp_driver_sdmmc esp_driver_uart sdmmc fatfs esp_partition esp_timer esp_psram esp_hw_support
+        esp_driver_sdmmc esp_driver_uart sdmmc fatfs esp_partition esp_timer esp_psram esp_hw_support esp_mm
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
@@ -85,3 +86,7 @@ set_source_files_properties("${T386}/fmopl.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-all;-fsingle-precision-constant")
 set_source_files_properties("${T386}/i386.c" "${T386}/vga.c" "${T386}/pc.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-all;-O3")
+
+# ide.c's disk image stdio goes through the raw, cached SD access in hdd_cache.c
+set_source_files_properties("${T386}/ide.c"
+    PROPERTIES COMPILE_OPTIONS "-Wno-all;-DHDD_CACHE_REDIRECT_STDIO;-include;${CMAKE_CURRENT_LIST_DIR}/hdd_cache.h")

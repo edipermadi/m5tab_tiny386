@@ -27,6 +27,24 @@ menu "tiny386 on M5Stack Tab5"
             Guest RAM (mem_size in tiny386.ini), VGA RAM and the 1280x720
             console frame buffer are carved out of this pool.
 
+    config TAB5_HDD_CACHE_MB
+        int "Disk image read cache in PSRAM (MB, 0 = off)"
+        range 0 8
+        default 2
+        help
+            Disk images on the SD card are read and written with raw sector
+            DMA. This much PSRAM (outside the emulator pool) caches what the
+            guest reads, in blocks that also act as read-ahead. Writes always
+            go straight through to the card.
+
+    config TAB5_HDD_CACHE_BLOCK_KB
+        int "Disk cache block size (KB)"
+        range 4 64
+        default 16
+        help
+            Unit of the cache and of read-ahead: a miss reads this much from
+            the card.
+
     config TAB5_KBD_ENABLE
         bool "M5Stack Tab5 Keyboard (I2C)"
         default y

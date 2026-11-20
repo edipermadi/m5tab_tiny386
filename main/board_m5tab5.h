@@ -36,3 +36,7 @@
 #define SD_PWR_CTRL_LDO_IO_ID 4
 
 #define MIXER_BUF_LEN 512
+
+/* ide.c: gather the blocks of a multi-sector write into one SD write (64 KB
+ * buffer); the command still completes only once the data is on the card */
+#define IDE_ENABLE_WRITE_GATHER
