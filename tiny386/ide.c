@@ -2189,6 +2189,60 @@ static BlockDevice *block_device_init_espsd(int64_t start_sector, int64_t nb_sec
 }
 #endif
 
+#ifdef IDE_ENABLE_HDD_CACHE
+/* An image read and written through the board's own cached raw-sector access
+   (hdd_cache.h, provided by the port); NULL where that does not apply, and
+   the image then goes through stdio. */
+#include "hdd_cache.h"
+
+static int64_t hddc_get_sector_count(BlockDevice *bs)
+{
+    return hdd_sector_count(bs->opaque);
+}
+
+static int hddc_read_async(BlockDevice *bs,
+                           uint64_t sector_num, uint8_t *buf, int n,
+                           BlockDeviceCompletionFunc *cb, void *opaque)
+{
+    return hdd_read(bs->opaque, sector_num, buf, n); /* synchronous */
+}
+
+static int hddc_write_async(BlockDevice *bs,
+                            uint64_t sector_num, const uint8_t *buf, int n,
+                            BlockDeviceCompletionFunc *cb, void *opaque)
+{
+    return hdd_write(bs->opaque, sector_num, buf, n); /* synchronous */
+}
+
+static void hddc_setup(BlockDevice *bs, HddImage *h)
+{
+    memset(bs, 0, sizeof(*bs));
+    bs->opaque = h;
+    bs->get_sector_count = hddc_get_sector_count;
+    bs->get_chs = NULL;
+    bs->read_async = hddc_read_async;
+    bs->write_async = hddc_write_async;
+}
+
+static BlockDevice *block_device_init_hddc(const char *filename,
+                                           BlockDeviceModeEnum mode)
+{
+    HddImage *h = hdd_open(filename, mode == BF_MODE_RW);
+    if (!h)
+        return NULL;
+    /* the old image format (a header in front of the disk) stays with stdio */
+    uint8_t sec[SECTOR_SIZE];
+    if (hdd_sector_count(h) > 0 && hdd_read(h, 0, sec, 1) == 0 &&
+        memcmp(sec, ide_magic, 8) == 0) {
+        hdd_close(h);
+        return NULL;
+    }
+    BlockDevice *bs = pcmalloc(sizeof(*bs));
+    hddc_setup(bs, h);
+    return bs;
+}
+#endif
+
 #ifdef IDE_ENABLE_CISO
 //#include <zlib.h>
 //#include "miniz.h"
@@ -2353,16 +2407,17 @@ IDEIFState *ide_allocate(int irq, void *pic, void (*set_irq)(void *pic, int irq,
 
 int ide_attach(IDEIFState *s, int drive, const char *filename)
 {
+    BlockDevice *bs = NULL;
 #ifdef BUILD_ESP32
-    BlockDevice *bs;
-    if (strcmp(filename, "/dev/mmcblk0") == 0) {
+    if (strcmp(filename, "/dev/mmcblk0") == 0)
         bs = block_device_init_espsd(0, -1);
-    } else {
-        bs = block_device_init(filename, BF_MODE_RW);
-    }
-#else
-    BlockDevice *bs = block_device_init(filename, BF_MODE_RW);
 #endif
+#ifdef IDE_ENABLE_HDD_CACHE
+    if (!bs)
+        bs = block_device_init_hddc(filename, BF_MODE_RW);
+#endif
+    if (!bs)
+        bs = block_device_init(filename, BF_MODE_RW);
     s->drives[drive] = ide_hddrive_init(s, bs);
     return 0;
 }
@@ -2373,7 +2428,12 @@ int ide_attach_cd(IDEIFState *s, int drive, const char *filename)
 #ifdef IDE_ENABLE_CISO
     BlockDevice *bs = block_device_init_ciso(filename);
 #else
-    BlockDevice *bs = block_device_init(filename, BF_MODE_RO);
+    BlockDevice *bs = NULL;
+#ifdef IDE_ENABLE_HDD_CACHE
+    bs = block_device_init_hddc(filename, BF_MODE_RO);
+#endif
+    if (!bs)
+        bs = block_device_init(filename, BF_MODE_RO);
 #endif
     s->drives[drive] = ide_cddrive_init(s, bs);
     return 0;
@@ -2381,6 +2441,37 @@ int ide_attach_cd(IDEIFState *s, int drive, const char *filename)
 
 static void block_device_reinit(BlockDevice *bs, const char *filename)
 {
+#ifdef IDE_ENABLE_HDD_CACHE
+    /* a CD: through the cache if the new image can be, else through stdio */
+    bool cached = bs->get_sector_count == hddc_get_sector_count;
+    if (cached || (bs->get_sector_count == bf_get_sector_count && !bs->get_chs &&
+                   ((BlockDeviceFile *) bs->opaque)->mode == BF_MODE_RO)) {
+        HddImage *h = hdd_open(filename, false);
+        if (h) {
+            if (cached) {
+                hdd_close(bs->opaque);
+            } else {
+                BlockDeviceFile *bf = bs->opaque;
+                if (bf->f)
+                    fclose(bf->f);
+                bf->f = NULL;
+            }
+            hddc_setup(bs, h);
+            return;
+        }
+        if (cached) {
+            FILE *f = fopen(filename, "rb");
+            if (!f) {
+                fprintf(stderr, "block_device_reinit: open failed: %s\n", filename);
+                return;
+            }
+            fclose(f);
+            hdd_close(bs->opaque);
+            *bs = *block_device_init(filename, BF_MODE_RO);
+            return;
+        }
+    }
+#endif
 #ifdef IDE_ENABLE_CISO
     if (bs->get_sector_count == ciso_get_sector_count) {
         BlockDeviceCISO *bf = bs->opaque;

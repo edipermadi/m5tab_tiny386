@@ -20,7 +20,6 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_timer.h"
-#include "esp_mac.h"
 
 #include "../tiny386/ini.h"
 #include "../tiny386/pc.h"
@@ -38,15 +37,6 @@ uint32_t get_uticks()
 /* NE2000 transmit hook, set by tiny386's Wi-Fi glue (esp/main/wifi.c). No
  * Wi-Fi in this port yet, so the emulated NIC has no link. */
 void (*_Atomic esp32_send_packet)(uint8_t *buf, int size);
-
-/* The emulated NIC's MAC address (see main/CMakeLists.txt): the chip's base
- * MAC, marked locally administered. Wi-Fi itself is never started. */
-esp_err_t tab5_nic_mac(uint8_t *mac)
-{
-    esp_err_t err = esp_efuse_mac_get_default(mac);
-    mac[0] = (mac[0] | 0x02) & ~0x01;
-    return err;
-}
 
 /* ---------------------------------------------------------------- memory */
 static char *psram;

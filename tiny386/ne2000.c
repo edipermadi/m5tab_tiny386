@@ -1251,9 +1251,16 @@ static void my_esp_get_mac(uint8_t *mac)
 }
 #else
 #include "esp_mac.h"
+#include "soc/soc_caps.h"
 static void my_esp_get_mac(uint8_t *mac)
 {
+#if SOC_WIFI_SUPPORTED
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
+#else
+    /* no Wi-Fi MAC on this chip (ESP32-P4): the base MAC, locally administered */
+    esp_efuse_mac_get_default(mac);
+    mac[0] = (mac[0] | 0x02) & ~0x01;
+#endif
 }
 #endif
 

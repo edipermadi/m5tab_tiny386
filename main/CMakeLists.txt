@@ -86,12 +86,3 @@ set_source_files_properties("${T386}/fmopl.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-all;-fsingle-precision-constant")
 set_source_files_properties("${T386}/i386.c" "${T386}/vga.c" "${T386}/pc.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-all;-O3")
-
-# ide.c's disk image stdio goes through the raw, cached SD access in hdd_cache.c
-set_source_files_properties("${T386}/ide.c"
-    PROPERTIES COMPILE_OPTIONS "-Wno-all;-DHDD_CACHE_REDIRECT_STDIO;-include;${CMAKE_CURRENT_LIST_DIR}/hdd_cache.h")
-
-# The NE2000 asks for the Wi-Fi station MAC, which the ESP32-P4 does not have
-# (there is no Wi-Fi in this port): give it one made from the chip's base MAC.
-set_source_files_properties("${T386}/ne2000.c"
-    PROPERTIES COMPILE_OPTIONS "-Wno-all;-Desp_read_mac(m,t)=tab5_nic_mac(m)")

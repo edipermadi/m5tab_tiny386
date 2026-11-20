@@ -40,3 +40,7 @@
 /* ide.c: gather the blocks of a multi-sector write into one SD write (64 KB
  * buffer); the command still completes only once the data is on the card */
 #define IDE_ENABLE_WRITE_GATHER
+
+/* ide.c: disk and CD images on the SD card through main/hdd_cache.c (raw
+ * sector DMA and a PSRAM read cache) instead of stdio */
+#define IDE_ENABLE_HDD_CACHE

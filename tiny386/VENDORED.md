@@ -13,6 +13,13 @@ port can change it.
 - `vga.c`, `vga.h`: `vga_get_picture_size()` reports the size of the picture
   last drawn into the frame buffer, so the Tab5 display code can scale it up
   to fill the panel (`main/lcd_tab5.c`).
+- `ide.c`: with `IDE_ENABLE_HDD_CACHE`, hard disk and CD images go through a
+  block device backed by the port's `hdd_cache.h` (raw SD sectors and a PSRAM
+  read cache, `main/hdd_cache.c`) when it can take them, else through stdio
+  as before; CD changes switch between the two.
+- `ne2000.c`: on a chip without Wi-Fi (`!SOC_WIFI_SUPPORTED`, the ESP32-P4)
+  the NIC's MAC is the chip's base MAC, locally administered, instead of the
+  Wi-Fi station MAC it does not have.
 
 ## Updating from upstream
 

@@ -5,7 +5,6 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <errno.h>
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -24,7 +23,7 @@ static const char *TAG = "hdd_cache";
 
 #define SECT 512
 #define MOUNT_POINT "/sdcard/"
-#define MAX_FILES 4
+#define MAX_FILES 4 /* images open at once */
 
 #define BLOCK_SECTS (CONFIG_TAB5_HDD_CACHE_BLOCK_KB * 1024 / SECT)
 #define BLOCK_BYTES (BLOCK_SECTS * SECT)
@@ -41,7 +40,7 @@ typedef struct {
 
 typedef struct Block Block;
 struct Block {
-    struct HddFile *owner;
+    HddImage *owner;
     uint32_t blk;           /* block number within the file */
     uint32_t nsect;         /* valid sectors (the last block may be short) */
     Block *hnext;           /* hash chain */
@@ -49,21 +48,17 @@ struct Block {
     uint8_t *data;
 };
 
-typedef struct HddFile {
-    int magic;
+struct HddImage {
+    bool used;
+    bool writable;
     sdmmc_card_t *card;
     Extent *ext;
     int next;
     int last_ext;           /* last extent hit: accesses are mostly local */
-    uint64_t size;          /* bytes */
-    uint32_t nsect;         /* sectors, rounded up */
-    uint64_t pos;
-    bool writable;
-} HddFile;
+    uint32_t nsect;         /* whole sectors in the image */
+};
 
-#define HDD_MAGIC 0x48444443
-
-static HddFile files[MAX_FILES];
+static HddImage images[MAX_FILES];
 
 /* cache, shared by all images */
 static Block *blocks;
@@ -71,18 +66,10 @@ static int nblocks;
 static Block **hash;
 static int hash_mask;
 static Block lru; /* sentinel */
-static uint8_t *stage; /* DMA-aligned bounce for unaligned callers' buffers */
+static uint8_t *stage; /* DMA-aligned bounce for the callers' buffers */
 static size_t dma_align;
 
 static uint32_t stat_hits, stat_misses;
-
-static void unhash(Block *b);
-
-static bool is_ours(FILE *f)
-{
-    HddFile *h = (HddFile *)f;
-    return h >= files && h < files + MAX_FILES && h->magic == HDD_MAGIC;
-}
 
 /* ------------------------------------------------------------ setup */
 
@@ -141,7 +128,7 @@ static bool cache_init(void)
 }
 
 /* Map the clusters of the image to card sectors. */
-static bool map_file(HddFile *h, const char *path)
+static bool map_file(HddImage *h, const char *path)
 {
     sdmmc_card_t *card = rawsd;
     BYTE pdrv = ff_diskio_get_pdrv_card(card);
@@ -208,8 +195,8 @@ static bool map_file(HddFile *h, const char *path)
         fsect += h->ext[i].nsect;
     }
     h->next = n;
-    h->size = f_size(fil);
-    h->nsect = (uint32_t)((h->size + SECT - 1) / SECT);
+    FSIZE_t size = f_size(fil);
+    h->nsect = (uint32_t)(size / SECT);
     if (h->nsect > fsect) { /* the clusters must cover the file */
         free(h->ext);
         h->ext = NULL;
@@ -218,7 +205,7 @@ static bool map_file(HddFile *h, const char *path)
     h->card = card;
     ok = true;
     ESP_LOGI(TAG, "%s: %llu MB in %d fragment%s", path,
-             (unsigned long long)(h->size >> 20), n, n == 1 ? "" : "s");
+             (unsigned long long)(size >> 20), n, n == 1 ? "" : "s");
 out:
     fil->cltbl = NULL;
     f_close(fil);
@@ -227,75 +214,10 @@ out:
     return ok;
 }
 
-FILE *hdd_fopen(const char *path, const char *mode)
-{
-    if (!rawsd || strncmp(path, MOUNT_POINT, strlen(MOUNT_POINT)) != 0 ||
-        mode[0] != 'r' || !cache_init()) {
-        return fopen(path, mode);
-    }
-    HddFile *h = NULL;
-    for (int i = 0; i < MAX_FILES; i++) {
-        if (files[i].magic != HDD_MAGIC) {
-            h = &files[i];
-            break;
-        }
-    }
-    if (!h) {
-        return fopen(path, mode);
-    }
-    memset(h, 0, sizeof(*h));
-    if (!map_file(h, path)) {
-        ESP_LOGW(TAG, "%s: no raw access, using stdio", path);
-        return fopen(path, mode);
-    }
-    h->writable = strchr(mode, '+') != NULL;
-    h->magic = HDD_MAGIC;
-    return (FILE *)h;
-}
-
-int hdd_fclose(FILE *f)
-{
-    if (!is_ours(f)) {
-        return fclose(f);
-    }
-    HddFile *h = (HddFile *)f;
-    for (int i = 0; i < nblocks; i++) { /* drop its blocks */
-        if (blocks[i].owner == h) {
-            unhash(&blocks[i]);
-        }
-    }
-    free(h->ext);
-    h->magic = 0;
-    return 0;
-}
-
-int hdd_fseeko(FILE *f, off_t offset, int whence)
-{
-    if (!is_ours(f)) {
-        return fseeko(f, offset, whence);
-    }
-    HddFile *h = (HddFile *)f;
-    int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? (int64_t)h->pos : (int64_t)h->size;
-    if (base + offset < 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    h->pos = base + offset;
-    return 0;
-}
-
-off_t hdd_ftello(FILE *f)
-{
-    if (!is_ours(f)) {
-        return ftello(f);
-    }
-    return ((HddFile *)f)->pos;
-}
-
 /* ------------------------------------------------------------ raw I/O */
 
 /* sectors [s, s + n) of the file <-> buf (DMA-aligned) */
-static bool raw_io(HddFile *h, uint32_t s, uint32_t n, uint8_t *buf, bool write)
+static bool raw_io(HddImage *h, uint32_t s, uint32_t n, uint8_t *buf, bool write)
 {
     while (n) {
         /* find the extent of sector s, starting from the last one used */
@@ -334,7 +256,7 @@ static bool raw_io(HddFile *h, uint32_t s, uint32_t n, uint8_t *buf, bool write)
 
 /* ------------------------------------------------------------ cache */
 
-static Block *lookup(HddFile *h, uint32_t blk)
+static Block *lookup(HddImage *h, uint32_t blk)
 {
     for (Block *b = hash[blk & hash_mask]; b; b = b->hnext) {
         if (b->blk == blk && b->owner == h) {
@@ -367,7 +289,7 @@ static void unhash(Block *b)
     b->owner = NULL;
 }
 
-static Block *get_block(HddFile *h, uint32_t blk)
+static Block *get_block(HddImage *h, uint32_t blk)
 {
     Block *b = lookup(h, blk);
     if (b) {
@@ -396,130 +318,117 @@ static Block *get_block(HddFile *h, uint32_t blk)
     return b;
 }
 
-/* bytes [pos, pos + len) of the file, within its size */
-static bool read_bytes(HddFile *h, uint64_t pos, uint8_t *dst, size_t len)
+/* ------------------------------------------------------------ API */
+
+HddImage *hdd_open(const char *path, bool writable)
 {
-    while (len) {
-        uint32_t s = pos / SECT;
-        size_t k;
+    if (!rawsd || strncmp(path, MOUNT_POINT, strlen(MOUNT_POINT)) != 0 || !cache_init()) {
+        return NULL;
+    }
+    HddImage *h = NULL;
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (!images[i].used) {
+            h = &images[i];
+            break;
+        }
+    }
+    if (!h) {
+        return NULL;
+    }
+    memset(h, 0, sizeof(*h));
+    if (!map_file(h, path)) {
+        ESP_LOGW(TAG, "%s: no raw access, using stdio", path);
+        return NULL;
+    }
+    h->writable = writable;
+    h->used = true;
+    return h;
+}
+
+void hdd_close(HddImage *h)
+{
+    for (int i = 0; i < nblocks; i++) { /* drop its blocks */
+        if (blocks[i].owner == h) {
+            unhash(&blocks[i]);
+        }
+    }
+    free(h->ext);
+    h->ext = NULL;
+    h->used = false;
+}
+
+int64_t hdd_sector_count(HddImage *h)
+{
+    return h->nsect;
+}
+
+int hdd_read(HddImage *h, uint64_t sector, uint8_t *buf, int n)
+{
+    if (n < 0 || sector + n > h->nsect) {
+        return -1;
+    }
+    uint32_t s = sector;
+    while (n) {
+        int k;
         if (nblocks) {
             Block *b = get_block(h, s / BLOCK_SECTS);
             if (!b) {
-                return false;
+                return -1;
             }
-            size_t boff = pos - (uint64_t)b->blk * BLOCK_BYTES;
-            k = (size_t)b->nsect * SECT - boff;
-            if (k > len) {
-                k = len;
+            uint32_t boff = s - b->blk * BLOCK_SECTS;
+            k = b->nsect - boff;
+            if (k > n) {
+                k = n;
             }
-            memcpy(dst, b->data + boff, k);
+            memcpy(buf, b->data + boff * SECT, k * SECT);
         } else { /* no cache: through the staging buffer */
-            uint32_t n = h->nsect - s < STAGE_SECTS ? h->nsect - s : STAGE_SECTS;
-            if (!raw_io(h, s, n, stage, false)) {
-                return false;
+            k = n < STAGE_SECTS ? n : STAGE_SECTS;
+            if (!raw_io(h, s, k, stage, false)) {
+                return -1;
             }
-            size_t soff = pos - (uint64_t)s * SECT;
-            k = (size_t)n * SECT - soff;
-            if (k > len) {
-                k = len;
-            }
-            if (dst != stage + soff) {
-                memmove(dst, stage + soff, k);
-            }
+            memcpy(buf, stage, k * SECT);
         }
-        pos += k;
-        dst += k;
-        len -= k;
+        s += k;
+        buf += k * SECT;
+        n -= k;
     }
-    return true;
+    return 0;
 }
 
 /* write-through: card first, then the cached copies */
-static bool write_bytes(HddFile *h, uint64_t pos, const uint8_t *src, size_t len)
+int hdd_write(HddImage *h, uint64_t sector, const uint8_t *buf, int n)
 {
-    while (len) {
-        uint32_t s = pos / SECT;
-        size_t soff = pos % SECT;
-        uint32_t n = (soff + len + SECT - 1) / SECT;
-        if (n > STAGE_SECTS) {
-            n = STAGE_SECTS;
-        }
-        size_t k = (size_t)n * SECT - soff;
-        if (k > len) {
-            k = len;
-        }
-        /* partial first/last sector: read-modify-write */
-        if (soff || (soff + k) % SECT) {
-            if (!read_bytes(h, (uint64_t)s * SECT, stage, (size_t)n * SECT)) {
-                return false;
-            }
-        }
-        memcpy(stage + soff, src, k);
-        if (!raw_io(h, s, n, stage, true)) {
-            /* the card may hold old or new data now: forget what we had */
-            for (uint32_t blk = s / BLOCK_SECTS; nblocks && blk <= (s + n - 1) / BLOCK_SECTS; blk++) {
-                Block *b = lookup(h, blk);
-                if (b) {
-                    unhash(b);
-                }
-            }
-            return false;
-        }
-        for (uint32_t blk = s / BLOCK_SECTS; nblocks && blk <= (s + n - 1) / BLOCK_SECTS; blk++) {
+    if (!h->writable || n < 0 || sector + n > h->nsect) {
+        return -1;
+    }
+    uint32_t s = sector;
+    while (n) {
+        int k = n < STAGE_SECTS ? n : STAGE_SECTS;
+        memcpy(stage, buf, k * SECT);
+        bool ok = raw_io(h, s, k, stage, true);
+        for (uint32_t blk = s / BLOCK_SECTS; nblocks && blk <= (s + k - 1) / BLOCK_SECTS; blk++) {
             Block *b = lookup(h, blk);
             if (!b) {
                 continue;
             }
-            uint64_t bstart = (uint64_t)blk * BLOCK_BYTES;
-            uint64_t bend = bstart + (uint64_t)b->nsect * SECT;
-            uint64_t from = pos > bstart ? pos : bstart;
-            uint64_t to = pos + k < bend ? pos + k : bend;
+            if (!ok) { /* the card may hold old or new data now: forget it */
+                unhash(b);
+                continue;
+            }
+            uint32_t bstart = blk * BLOCK_SECTS, bend = bstart + b->nsect;
+            uint32_t from = s > bstart ? s : bstart;
+            uint32_t to = s + k < bend ? s + k : bend;
             if (from < to) {
-                memcpy(b->data + (from - bstart), src + (from - pos), to - from);
+                memcpy(b->data + (from - bstart) * SECT, buf + (from - s) * SECT,
+                       (to - from) * SECT);
             }
         }
-        pos += k;
-        src += k;
-        len -= k;
+        if (!ok) {
+            return -1;
+        }
+        s += k;
+        buf += k * SECT;
+        n -= k;
     }
-    return true;
-}
-
-size_t hdd_fread(void *buf, size_t size, size_t n, FILE *f)
-{
-    if (!is_ours(f)) {
-        return fread(buf, size, n, f);
-    }
-    HddFile *h = (HddFile *)f;
-    if (!size || !n || h->pos >= h->size) {
-        return 0;
-    }
-    uint64_t avail = h->size - h->pos;
-    size_t items = (uint64_t)size * n <= avail ? n : (size_t)(avail / size);
-    size_t len = items * size;
-    if (len && !read_bytes(h, h->pos, buf, len)) {
-        return 0;
-    }
-    h->pos += len;
-    return items;
-}
-
-size_t hdd_fwrite(const void *buf, size_t size, size_t n, FILE *f)
-{
-    if (!is_ours(f)) {
-        return fwrite(buf, size, n, f);
-    }
-    HddFile *h = (HddFile *)f;
-    if (!h->writable || !size || !n || h->pos >= h->size) {
-        return 0;
-    }
-    /* the image cannot grow: its clusters are all we may touch */
-    uint64_t avail = h->size - h->pos;
-    size_t items = (uint64_t)size * n <= avail ? n : (size_t)(avail / size);
-    size_t len = items * size;
-    if (len && !write_bytes(h, h->pos, buf, len)) {
-        return 0;
-    }
-    h->pos += len;
-    return items;
+    return 0;
 }

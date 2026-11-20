@@ -1,47 +1,38 @@
 /*
- * Fast, cached disk image access for tiny386's ide.c (force-included into
- * ide.c only, see main/CMakeLists.txt; ide.c itself is unchanged).
+ * Fast, cached disk image access for tiny386's ide.c, which uses it for its
+ * hard disk and CD images when built with IDE_ENABLE_HDD_CACHE (see
+ * board_m5tab5.h and block_device_init_hddc() in tiny386/ide.c).
  *
- * ide.c reads and writes its disk images with fopen/fseeko/fread/fwrite. On
- * this board that path is slow:
+ * Through stdio, disk images on this board are slow:
  *   - every IDE command (at most 2 KB) is a separate SD card transaction,
  *   - the guest's buffer is not DMA-aligned, so the SD driver bounces it
  *     through a temporary buffer one 512-byte sector at a time,
  *   - FatFs follows the file's cluster chain from the start on every
  *     backward seek, which for a large image means hundreds of FAT reads.
  *
- * For an image on the SD card, hdd_fopen() maps its clusters to card sectors
- * once (FatFs fast-seek link map). After that, reads and writes go straight to
- * the card with DMA, and reads go through an LRU block cache in PSRAM that
- * also reads ahead. Writes go through to the card before they return (the
- * cache is never dirty), so pulling the power loses nothing ide.c reported as
- * written. The image cannot grow, so its FAT entries never change.
- *
- * Anything else (another path, the map failing) falls back to plain stdio.
+ * hdd_open() maps an image's clusters to card sectors once (FatFs fast-seek
+ * link map). After that, reads and writes go straight to the card with DMA,
+ * and reads go through an LRU block cache in PSRAM that also reads ahead.
+ * Writes go through to the card before they return (the cache is never
+ * dirty), so pulling the power loses nothing ide.c reported as written. The
+ * image cannot grow, so its FAT entries never change.
  */
 #pragma once
 
-#include <stdio.h>
-#include <sys/types.h>
+#include <stdbool.h>
+#include <stdint.h>
 
-FILE *hdd_fopen(const char *path, const char *mode);
-int hdd_fclose(FILE *f);
-int hdd_fseeko(FILE *f, off_t offset, int whence);
-off_t hdd_ftello(FILE *f);
-size_t hdd_fread(void *buf, size_t size, size_t n, FILE *f);
-size_t hdd_fwrite(const void *buf, size_t size, size_t n, FILE *f);
+typedef struct HddImage HddImage;
 
-#ifdef HDD_CACHE_REDIRECT_STDIO
-#undef fopen
-#undef fclose
-#undef fseeko
-#undef ftello
-#undef fread
-#undef fwrite
-#define fopen hdd_fopen
-#define fclose hdd_fclose
-#define fseeko hdd_fseeko
-#define ftello hdd_ftello
-#define fread hdd_fread
-#define fwrite hdd_fwrite
-#endif
+/* An image on the SD card (/sdcard/...), or NULL: not there, not a whole
+   number of clusters on a 512-byte-sector card, or no free slot. The caller
+   then falls back to stdio. */
+HddImage *hdd_open(const char *path, bool writable);
+void hdd_close(HddImage *h);
+
+/* whole 512-byte sectors in the image */
+int64_t hdd_sector_count(HddImage *h);
+
+/* n sectors from sector on; 0, or -1 on an error or out of range */
+int hdd_read(HddImage *h, uint64_t sector, uint8_t *buf, int n);
+int hdd_write(HddImage *h, uint64_t sector, const uint8_t *buf, int n);
