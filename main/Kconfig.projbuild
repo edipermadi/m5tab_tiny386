@@ -36,6 +36,17 @@ menu "tiny386 on M5Stack Tab5"
             bool "Off: 1:1, centred"
     endchoice
 
+    config TAB5_POWEROFF_ON_SHUTDOWN
+        bool "Switch the Tab5 off when the guest shuts down"
+        default y
+        help
+            When the guest turns the PC off through APM (Windows 9x "Shut
+            down" with APM support installed, or a DOS power-off tool):
+            speaker, panel and backlight off, USB-A 5V, EXT5V and the
+            ESP32-C6 off, and the ESP32-P4 into deep sleep with no wake-up
+            source. The reset button then powers it back on. The charger
+            stays enabled.
+
     config TAB5_BACKLIGHT_PERCENT
         int "Backlight brightness (%)"
         range 5 100

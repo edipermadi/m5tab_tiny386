@@ -20,6 +20,10 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_timer.h"
+#include "esp_sleep.h"
+#include "esp_lcd_panel_ops.h"
+#include "driver/gpio.h"
+#include "bsp/bsp_codec.h"
 
 #include "../tiny386/ini.h"
 #include "../tiny386/pc.h"
@@ -249,6 +253,45 @@ static int parse_ini(void *user, const char *section, const char *name, const ch
     return 1;
 }
 
+#if CONFIG_TAB5_POWEROFF_ON_SHUTDOWN
+/*
+ * The guest has shut down (APM "off": Windows' "Shut down", or any DOS power-
+ * off tool; tiny386's SeaBIOS then writes "Shutdown" to port 0x8900 and
+ * pc_main() returns). Disk writes are already on the card (hdd_cache writes
+ * through), so everything can go: speaker, panel and backlight off, the
+ * expander-switched rails off, then deep sleep with no wake-up source. The
+ * reset button starts the board again, like a power button.
+ */
+static void power_off_board(void)
+{
+    ESP_LOGW(TAG, "guest shut down: everything off, deep sleep (reset = power on)");
+
+    bsp_codec_mute(true);
+    bsp_audio_amp_set(false);
+
+    bsp_display_brightness_set(0);
+    if (globals.panel) {
+        esp_lcd_panel_disp_on_off(globals.panel, false);
+        esp_lcd_panel_disp_sleep(globals.panel, true);
+        vTaskDelay(pdMS_TO_TICKS(120)); /* sleep-in takes up to 120 ms */
+    }
+    /* backlight enable low through deep sleep (held where the chip can:
+       P4 rev >= 3.0; earlier ones leave the pin to the board's pull-down) */
+    gpio_reset_pin(BSP_LCD_BACKLIGHT_GPIO);
+    gpio_set_direction(BSP_LCD_BACKLIGHT_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(BSP_LCD_BACKLIGHT_GPIO, 0);
+    gpio_pulldown_en(BSP_LCD_BACKLIGHT_GPIO);
+    gpio_hold_en(BSP_LCD_BACKLIGHT_GPIO);
+
+    bsp_power_down();
+
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_deep_sleep_start();
+}
+#endif
+
 static void i386_task(void *arg)
 {
     struct esp_ini_config *config = arg;
@@ -257,6 +300,9 @@ static void i386_task(void *arg)
     xEventGroupWaitBits(global_event_group, BIT1, pdFALSE, pdFALSE, portMAX_DELAY);
     pc_main(config->filename);
     ESP_LOGI(TAG, "PC powered off");
+#if CONFIG_TAB5_POWEROFF_ON_SHUTDOWN
+    power_off_board();
+#endif
     vTaskDelete(NULL);
 }
 

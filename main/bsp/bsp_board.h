@@ -59,6 +59,11 @@ esp_err_t bsp_i2c_init(i2c_master_bus_handle_t *ret_bus);
 /* Speaker amplifier on/off (I/O expander). */
 void bsp_audio_amp_set(bool on);
 
+/* Tab5: switch off what the I/O expanders power (speaker amp, EXT5V, USB-A
+ * 5V, ESP32-C6) and hold the LCD, touch and camera in reset. The charger is
+ * left on. For just before deep sleep. */
+void bsp_power_down(void);
+
 enum { BSP_DIAG_POWER, BSP_DIAG_PANEL, BSP_DIAG_TOUCH, BSP_DIAG_SLOTS };
 void bsp_diag_note(int slot, const char *fmt, ...);
 

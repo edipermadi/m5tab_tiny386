@@ -1,6 +1,7 @@
 /* Backlight: LEDC PWM on GPIO22 (active high). */
 #include "bsp_board.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
 
 #define BL_TIMER    LEDC_TIMER_1
 #define BL_CHANNEL  LEDC_CHANNEL_1
@@ -11,6 +12,8 @@ void bsp_display_brightness_set(int percent)
 {
     static bool ready = false;
     if (!ready) {
+        /* held low through deep sleep at the last shutdown (esp_main.c) */
+        gpio_hold_dis(BSP_LCD_BACKLIGHT_GPIO);
         const ledc_timer_config_t t = {
             .speed_mode = LEDC_LOW_SPEED_MODE,
             .duty_resolution = BL_RES,

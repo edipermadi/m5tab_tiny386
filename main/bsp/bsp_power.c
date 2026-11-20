@@ -170,3 +170,20 @@ void bsp_audio_amp_set(bool on)
     pi4io_wr(s_e1, PI4IO_REG_OUT, s_e1_out);
 #endif
 }
+
+void bsp_power_down(void)
+{
+#if defined(BSP_BOARD_M5STACK_TAB5)
+    if (!s_e1 || !s_e2) {
+        return;
+    }
+    /* E1: speaker amp, EXT5V (keyboard port) and the antenna switch off; LCD
+     * (P4, back to an output), touch and camera held in reset */
+    s_e1_out = 0x00;
+    pi4io_wr(s_e1, PI4IO_REG_OUT, s_e1_out);
+    pi4io_wr(s_e1, PI4IO_REG_IO_DIR, 0x7F);
+    /* E2: ESP32-C6 (WLAN_PWR_EN) and USB-A 5V off; the charger stays enabled
+     * so the battery still charges while the board sleeps */
+    pi4io_wr(s_e2, PI4IO_REG_OUT, 0x80);
+#endif
+}
