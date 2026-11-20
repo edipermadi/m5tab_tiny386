@@ -14,6 +14,28 @@ menu "tiny386 on M5Stack Tab5"
             bool "Landscape, rotated 270 degrees"
     endchoice
 
+    choice TAB5_SCALE
+        prompt "Scaling of the guest's picture"
+        default TAB5_SCALE_SHARP
+        help
+            Guest modes smaller than the 1280x720 panel are scaled up to its
+            height (4:3 for VGA modes).
+
+        config TAB5_SCALE_SHARP
+            bool "Sharp: even pixels, blended edges"
+            help
+                Every guest pixel gets the same size; only the panel pixels
+                that fall across two guest pixels are blended. Crisp, even
+                text. Costs some CPU time on the display core.
+        config TAB5_SCALE_NEAREST
+            bool "Nearest neighbour"
+            help
+                No blending, so the cheapest, but at these ratios some guest
+                pixels come out twice as wide as others: uneven text.
+        config TAB5_SCALE_OFF
+            bool "Off: 1:1, centred"
+    endchoice
+
     config TAB5_BACKLIGHT_PERCENT
         int "Backlight brightness (%)"
         range 5 100
