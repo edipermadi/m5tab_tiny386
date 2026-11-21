@@ -3,10 +3,19 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 #include "sdkconfig.h"
 
 /* lcd_tab5.c */
 void vga_task(void *arg);
+/* panel up, cleared, backlight on (vga_task calls it too; once is enough) */
+esp_err_t lcd_init(void);
+/* a full-screen message before the PC starts: a title in color (RGB565)
+   and a grey detail line (or NULL) */
+void lcd_status(const char *title, const char *detail, uint16_t color);
+#define LCD_WHITE 0xFFFF
+#define LCD_GREEN 0x87F0
+#define LCD_AMBER 0xFD20
 int lcd_strip_count(void);
 /* copies one strip of the emulator frame buffer to the panel (with rotation) */
 void lcd_present_strip(const uint16_t *src_fb, int strip);

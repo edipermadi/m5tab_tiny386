@@ -377,8 +377,10 @@ void app_main(void)
        tiny386.ini can be put on a card that has none */
     sdfs_serial_start();
 #endif
+    /* the panel first, for the status of the next step */
+    lcd_init();
     /* the clock over Wi-Fi, then Wi-Fi off: before the SD card (the C6 link
-       shares its SDMMC controller) and before USB and the display (RAM) */
+       shares its SDMMC controller) and before USB (RAM) */
     net_init();
     storage_init();
 

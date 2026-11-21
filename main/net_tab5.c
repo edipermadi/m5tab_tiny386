@@ -277,9 +277,25 @@ static void net_sync(void)
     esp_event_loop_create_default();
     ESP_LOGI(TAG, "Wi-Fi \"%s\": getting the time (up to %d s)", s_ssid, CONFIG_TAB5_TIME_WAIT_S);
     int64_t t0 = esp_timer_get_time();
+    char line[96];
+    snprintf(line, sizeof(line), "Connecting to %s", s_ssid);
+    lcd_status("Setting the clock", line, LCD_WHITE);
     if (wifi_start()) {
-        bool ok = xEventGroupWaitBits(s_ev, BIT_TIME_SET, pdFALSE, pdFALSE,
-                                      pdMS_TO_TICKS(CONFIG_TAB5_TIME_WAIT_S * 1000)) & BIT_TIME_SET;
+        /* the screen says what is going on, once a second */
+        bool ok = false;
+        for (int t = 0; t < CONFIG_TAB5_TIME_WAIT_S && !ok; t++) {
+            ok = xEventGroupWaitBits(s_ev, BIT_TIME_SET, pdFALSE, pdFALSE,
+                                     pdMS_TO_TICKS(1000)) & BIT_TIME_SET;
+            if (!ok) {
+                if (xEventGroupGetBits(s_ev) & BIT_GOT_IP) {
+                    snprintf(line, sizeof(line), "Connected (%s), asking %s ... %d s",
+                             s_ip, CONFIG_TAB5_NTP_SERVER, t + 1);
+                } else {
+                    snprintf(line, sizeof(line), "Connecting to %s ... %d s", s_ssid, t + 1);
+                }
+                lcd_status("Setting the clock", line, LCD_WHITE);
+            }
+        }
         int secs = (int)((esp_timer_get_time() - t0) / 1000000);
         if (ok) {
             snprintf(s_result, sizeof(s_result), "synced at boot in %d s", secs);
@@ -293,10 +309,20 @@ static void net_sync(void)
     } else {
         snprintf(s_result, sizeof(s_result), "no Wi-Fi: ESP32-C6 link failed");
     }
-    if (!(xEventGroupGetBits(s_ev) & BIT_TIME_SET)) {
+    if (xEventGroupGetBits(s_ev) & BIT_TIME_SET) {
+        time_t now = time(NULL);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        strftime(line, sizeof(line), "%Y-%m-%d %H:%M", &tm);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " %s", s_tz[0] ? s_tz : "UTC");
+        lcd_status("Clock set", line, LCD_GREEN);
+    } else {
         ESP_LOGW(TAG, "no network time: %s", s_result);
+        lcd_status("No network time - starting anyway", s_result, LCD_AMBER);
     }
     wifi_stop();
+    /* long enough to read it (Wi-Fi going down takes some of it) */
+    vTaskDelay(pdMS_TO_TICKS((xEventGroupGetBits(s_ev) & BIT_TIME_SET) ? 700 : 2500));
     ESP_LOGI(TAG, "Wi-Fi off");
 }
 

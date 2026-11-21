@@ -338,16 +338,16 @@ int lcd_strip_count(void)
     return NSTRIPS;
 }
 
-void vga_task(void *arg)
+esp_err_t lcd_init(void)
 {
-    ESP_LOGI(TAG, "vga runs on core %d", esp_cpu_get_core_id());
-
+    if (globals.panel) {
+        return ESP_OK;
+    }
     esp_lcd_panel_handle_t panel = NULL;
     esp_err_t err = bsp_display_new(&panel);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "display init failed: %s", esp_err_to_name(err));
-        vTaskDelete(NULL);
-        return;
+        return err;
     }
     ESP_LOGI(TAG, "panel: %s", bsp_display_panel_name());
 
@@ -357,8 +357,72 @@ void vga_task(void *arg)
     memset(s_panel_fb, 0, (size_t)FB_W * FB_H * 2);
     esp_lcd_panel_draw_bitmap(panel, 0, 0, FB_W, FB_H, s_panel_fb);
     bsp_display_brightness_set(CONFIG_TAB5_BACKLIGHT_PERCENT);
-
     globals.panel = panel;
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------- status screen */
+
+extern const uint8_t vgafont16[256 * 16];   /* tiny386 vgafont.c, 8x16 */
+
+/* one landscape pixel (as the PC picture is shown) */
+static inline void status_px(int X, int Y, uint16_t c)
+{
+    const int LW = FB_H, LH = FB_W;
+    if (X < 0 || X >= LW || Y < 0 || Y >= LH) {
+        return;
+    }
+#if CONFIG_TAB5_ROTATION_90
+    int py = X, pc = LH - 1 - Y;
+#else
+    int py = LW - 1 - X, pc = Y;
+#endif
+    s_panel_fb[(size_t)py * FB_W + pc] = c;
+}
+
+/* a line of text, centred across the landscape screen, at row y */
+static void status_text(const char *s, int y, int scale, uint16_t color)
+{
+    int n = strlen(s);
+    int x0 = (FB_H - n * 8 * scale) / 2;
+    for (int i = 0; i < n; i++) {
+        const uint8_t *g = &vgafont16[(uint8_t)s[i] * 16];
+        for (int r = 0; r < 16; r++) {
+            for (int b = 0; b < 8; b++) {
+                if (!(g[r] & (0x80 >> b))) {
+                    continue;
+                }
+                for (int dy = 0; dy < scale; dy++) {
+                    for (int dx = 0; dx < scale; dx++) {
+                        status_px(x0 + (i * 8 + b) * scale + dx, y + r * scale + dy, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void lcd_status(const char *title, const char *detail, uint16_t color)
+{
+    if (!s_panel_fb) {
+        return;
+    }
+    memset(s_panel_fb, 0, (size_t)FB_W * FB_H * 2);
+    const int LH = FB_W;
+    status_text(title, LH / 2 - 16 * 3 - 12, 3, color);
+    if (detail) {
+        status_text(detail, LH / 2 + 12, 2, 0xC618);     /* light grey */
+    }
+    esp_lcd_panel_draw_bitmap(globals.panel, 0, 0, FB_W, FB_H, s_panel_fb);
+}
+
+void vga_task(void *arg)
+{
+    ESP_LOGI(TAG, "vga runs on core %d", esp_cpu_get_core_id());
+    if (lcd_init() != ESP_OK) {
+        vTaskDelete(NULL);
+        return;
+    }
     /* tell i386_task that the panel is ready */
     xEventGroupSetBits(global_event_group, BIT1);
     xEventGroupWaitBits(global_event_group, BIT0, pdFALSE, pdFALSE, portMAX_DELAY);
