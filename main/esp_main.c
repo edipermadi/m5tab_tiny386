@@ -7,6 +7,9 @@
  *   audio     (core 0)  mixer -> ES8388
  *   tab5_kbd  (core 0)  Tab5 Keyboard (I2C) -> PS/2 keyboard
  *   usb_*     (core 0)  USB host HID (mouse, keyboard) on the USB-A port
+ *   battery   (core 0)  INA226 -> the guest's APM power status
+ *   sdfs      (core 0)  SD card file access, settings over the USB-C console
+ *   (at boot only: ESP-Hosted, Wi-Fi, SNTP for the clock, net_tab5.c)
  */
 #include <stdio.h>
 #include <string.h>
@@ -220,6 +223,16 @@ static int pc_main(const char *file)
         conf.height = LCD_HEIGHT;
     }
 
+#if CONFIG_TAB5_SERIAL_FS
+    {
+        const char *busy[] = {
+            conf.disks[0], conf.disks[1], conf.disks[2], conf.disks[3],
+            conf.fdd[0], conf.fdd[1],
+        };
+        sdfs_set_busy(busy, sizeof(busy) / sizeof(busy[0]));
+    }
+#endif
+
     Console *console = console_init();
     PC *pc = pc_new(redraw, console, console->fb, &conf);
     console->pc = pc;
@@ -236,6 +249,47 @@ static int pc_main(const char *file)
         pc_step(pc);
     }
     return 0;
+}
+
+/* --------------------------------------------------------------- battery */
+/*
+ * The Tab5's battery, as the guest sees it through APM "get power status"
+ * (the patched SeaBIOS reads PC.host_power at port 0x8902): charge level,
+ * charging, and AC (USB-C) power. There is no USB-C VBUS sense, so AC is
+ * inferred from the battery current: on battery alone the board draws far
+ * more than 10 mA from it.
+ */
+#define BATTERY_POLL_MS     5000
+#define BATTERY_IDLE_MA     10      /* M5Unified's charging/discharging threshold */
+
+static void battery_task(void *arg)
+{
+    xEventGroupWaitBits(global_event_group, BIT0, pdFALSE, pdFALSE, portMAX_DELAY);
+    PC *pc = globals.pc;
+    uint16_t last = PC_POWER_DEFAULT;
+    for (;;) {
+        bsp_battery_t bat = { 0 };
+        uint16_t st = PC_POWER_DEFAULT;
+        if (bsp_battery_read(&bat) == ESP_OK && bat.present) {
+            st = bat.percent;
+            if (bat.current_ma >= -BATTERY_IDLE_MA) {
+                st |= PC_POWER_AC_ONLINE;
+            }
+            if (bat.current_ma > BATTERY_IDLE_MA) {
+                st |= PC_POWER_CHARGING;
+            }
+        }
+        pc->host_power = st;
+        if ((st & ~PC_POWER_PERCENT_MASK) != (last & ~PC_POWER_PERCENT_MASK)) {
+            ESP_LOGI(TAG, "power: %s, %s%s, %d %% (%d mV/cell, %d mA)",
+                     (st & PC_POWER_NO_BATTERY) ? "no battery" : "battery",
+                     (st & PC_POWER_AC_ONLINE) ? "AC" : "on battery",
+                     (st & PC_POWER_CHARGING) ? ", charging" : "",
+                     st & PC_POWER_PERCENT_MASK, bat.cell_mv, bat.current_ma);
+        }
+        last = st;
+        vTaskDelay(pdMS_TO_TICKS(BATTERY_POLL_MS));
+    }
 }
 
 /* ------------------------------------------------------------------ init */
@@ -259,8 +313,10 @@ static int parse_ini(void *user, const char *section, const char *name, const ch
  * off tool; tiny386's SeaBIOS then writes "Shutdown" to port 0x8900 and
  * pc_main() returns). Disk writes are already on the card (hdd_cache writes
  * through), so everything can go: speaker, panel and backlight off, the
- * expander-switched rails off, then deep sleep with no wake-up source. The
- * reset button starts the board again, like a power button.
+ * expander-switched rails off, then PWROFF_PULSE. On battery that cuts the
+ * power (the side power button turns it back on). On USB the board stays
+ * powered, so it deep sleeps with no wake-up source and the reset button
+ * starts it again.
  */
 static void power_off_board(void)
 {
@@ -287,6 +343,8 @@ static void power_off_board(void)
 
     fflush(stdout);
     vTaskDelay(pdMS_TO_TICKS(20));
+    /* on battery the supply is cut here; on USB we get past it */
+    bsp_power_off();
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     esp_deep_sleep_start();
 }
@@ -314,6 +372,14 @@ void app_main(void)
     ESP_ERROR_CHECK(bsp_i2c_init(NULL));
 
     audio_start();
+#if CONFIG_TAB5_SERIAL_FS
+    /* first: settings can be changed while the clock is being set, and a
+       tiny386.ini can be put on a card that has none */
+    sdfs_serial_start();
+#endif
+    /* the clock over Wi-Fi, then Wi-Fi off: before the SD card (the C6 link
+       shares its SDMMC controller) and before USB and the display (RAM) */
+    net_init();
     storage_init();
 
     psram_len = PSRAM_ALLOC_LEN;
@@ -354,8 +420,11 @@ void app_main(void)
 
     xTaskCreatePinnedToCore(i386_task, "i386_main", 8192, &config, 3, NULL, 1);
     xTaskCreatePinnedToCore(vga_task, "vga_task", 4096, NULL, 0, NULL, 0);
+    xTaskCreatePinnedToCore(battery_task, "battery", 3072, NULL, 1, NULL, 0);
 
-    ESP_LOGI(TAG, "free internal %u KB, PSRAM %u KB",
+    ESP_LOGI(TAG, "free internal %u KB (DMA-capable %u KB, largest block %u KB), PSRAM %u KB",
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) >> 10),
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) >> 10),
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) >> 10),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >> 10));
 }

@@ -125,9 +125,9 @@ static void cmos_update_time(CMOS *s)
 
 	ti = time(NULL);
 #ifndef _WIN32
-	gmtime_r(&ti, &tm);
+	localtime_r(&ti, &tm);
 #else
-	gmtime_s(&tm, &ti);
+	localtime_s(&tm, &ti);
 #endif
 	s->data[0] = bin2bcd(tm.tm_sec);
 	s->data[2] = bin2bcd(tm.tm_min);

@@ -82,6 +82,9 @@ typedef struct {
 
 	u8 port92;
 	int shutdown_state;
+	/* host power status, read by the BIOS's APM "get power status" at port
+	 * 0x8902 (16 bit). Written by the host port; see PC_POWER_*. */
+	volatile u16 host_power;
 	int reset_request;
 
 	// non-owning strings
@@ -115,6 +118,14 @@ typedef struct {
 	int vga_force_8dm;
 	const char *cpuid_vendor; // amd64-specific for now
 } PCConfig;
+
+/* PC.host_power: battery charge 0..100 % in the low byte (0xff = unknown),
+ * flags above it. The default is SeaBIOS's old answer: AC, no battery. */
+#define PC_POWER_PERCENT_MASK 0x00ff
+#define PC_POWER_AC_ONLINE    0x0100
+#define PC_POWER_CHARGING     0x0200
+#define PC_POWER_NO_BATTERY   0x8000
+#define PC_POWER_DEFAULT      (PC_POWER_NO_BATTERY | PC_POWER_AC_ONLINE | 0xff)
 
 PC *pc_new(SimpleFBDrawFunc *redraw, void *redraw_data,
 	   u8 *fb, PCConfig *conf);

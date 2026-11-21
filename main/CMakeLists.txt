@@ -39,6 +39,8 @@ idf_component_register(
         "hdd_cache.c"
         "kbd_tab5.c"
         "touch_tab5.c"
+        "sdfs_serial.c"
+        "net_tab5.c"
         "bsp/bsp_power.c"
         "bsp/bsp_touch.c"
         "bsp/bsp_display_tab5.c"
@@ -68,7 +70,8 @@ idf_component_register(
     INCLUDE_DIRS "." "${T386}/esp/main" "${FMOPL_GEN_DIR}"
     REQUIRES
         esp_lcd esp_driver_i2c esp_driver_i2s esp_driver_ledc esp_driver_gpio
-        esp_driver_sdmmc esp_driver_uart sdmmc fatfs esp_partition esp_timer esp_psram esp_hw_support esp_mm
+        esp_driver_sdmmc esp_driver_uart esp_driver_usb_serial_jtag
+        nvs_flash esp_wifi esp_netif esp_event lwip espressif__esp_hosted sdmmc fatfs esp_partition esp_timer esp_psram esp_hw_support esp_mm
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

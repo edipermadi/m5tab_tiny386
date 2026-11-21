@@ -55,14 +55,63 @@ void bsp_diag_note(int slot, const char *fmt, ...)
 #define PI4IO_REG_INT_MASK 0x11
 
 #define E1_SPK_EN          (1u << 1)
+#define E2_PWROFF_PULSE    (1u << 4)
 
-static i2c_master_dev_handle_t s_e1, s_e2;
+/* INA226 battery monitor on the SYS bus, 5 mOhm shunt in the battery path,
+ * wired so that charge current reads negative (M5Unified Power_Class) */
+#define INA226_ADDR        0x41
+#define INA226_REG_CONFIG  0x00
+#define INA226_REG_SHUNT   0x01     /* signed, 2.5 uV/LSB = 0.5 mA/LSB here */
+#define INA226_REG_BUS     0x02     /* 1.25 mV/LSB */
+/* 16-sample average, 1.1 ms bus and shunt conversions, continuous (as
+ * M5Unified sets it) */
+#define INA226_CFG_RUN     0x4527
+#define INA226_CFG_OFF     0x4520   /* the same, MODE = power-down */
+
+static i2c_master_dev_handle_t s_e1, s_e2, s_ina;
 static uint8_t s_e1_out;            /* shadow of E1's output register */
+static uint8_t s_e2_out;            /* and E2's */
+#define E2_WLAN_PWR_EN     (1u << 0)
 
 static esp_err_t pi4io_wr(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val)
 {
     uint8_t b[2] = { reg, val };
     return i2c_master_transmit(dev, b, 2, 50);
+}
+
+static esp_err_t ina226_wr(uint8_t reg, uint16_t val)
+{
+    uint8_t b[3] = { reg, val >> 8, val & 0xff };
+    return i2c_master_transmit(s_ina, b, sizeof(b), 50);
+}
+
+static esp_err_t ina226_rd(uint8_t reg, uint16_t *val)
+{
+    uint8_t b[2];
+    esp_err_t e = i2c_master_transmit_receive(s_ina, &reg, 1, b, 2, 50);
+    *val = (b[0] << 8) | b[1];
+    return e;
+}
+
+/* The INA226 keeps power through deep sleep on USB, so it may still be in
+ * the power-down mode bsp_power_down() left it in: always set it up. */
+static void ina226_init(void)
+{
+    i2c_device_config_t cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = INA226_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    if (i2c_master_bus_add_device(s_bus, &cfg, &s_ina) != ESP_OK) {
+        s_ina = NULL;
+        return;
+    }
+    esp_err_t e = ina226_wr(INA226_REG_CONFIG, INA226_CFG_RUN);
+    if (e != ESP_OK) {
+        ESP_LOGW(TAG, "INA226 battery monitor not responding: %s", esp_err_to_name(e));
+        i2c_master_bus_rm_device(s_ina);
+        s_ina = NULL;
+    }
 }
 
 static esp_err_t tab5_power_init(void)
@@ -108,7 +157,8 @@ static esp_err_t tab5_power_init(void)
     r |= pi4io_wr(s_e2, PI4IO_REG_PULL_EN, 0xF9);
     r |= pi4io_wr(s_e2, PI4IO_REG_IN_DEF, 0x40);
     r |= pi4io_wr(s_e2, PI4IO_REG_INT_MASK, 0xBF);
-    r |= pi4io_wr(s_e2, PI4IO_REG_OUT, 0x89);
+    s_e2_out = 0x89;                                 /* WLAN_PWR_EN, USB5V_EN, CHG_EN */
+    r |= pi4io_wr(s_e2, PI4IO_REG_OUT, s_e2_out);
     vTaskDelay(pdMS_TO_TICKS(10));
     /* release LCD_RST (P4 -> input with pull-up; its latch stays 0) and TP_RST */
     r |= pi4io_wr(s_e1, PI4IO_REG_IO_DIR, 0x6F);
@@ -117,6 +167,8 @@ static esp_err_t tab5_power_init(void)
     bsp_diag_note(BSP_DIAG_POWER, "expanders 0x43 id %02x, 0x44 id %02x, setup %s",
                   id, id2, r == ESP_OK ? "ok" : "FAILED");
     ESP_RETURN_ON_FALSE(r == ESP_OK, ESP_FAIL, TAG, "I/O expander setup failed");
+
+    ina226_init();
 
     vTaskDelay(pdMS_TO_TICKS(10));
     gpio_set_direction(BSP_TOUCH_INT_GPIO, GPIO_MODE_INPUT);
@@ -184,6 +236,71 @@ void bsp_power_down(void)
     pi4io_wr(s_e1, PI4IO_REG_IO_DIR, 0x7F);
     /* E2: ESP32-C6 (WLAN_PWR_EN) and USB-A 5V off; the charger stays enabled
      * so the battery still charges while the board sleeps */
-    pi4io_wr(s_e2, PI4IO_REG_OUT, 0x80);
+    s_e2_out = 0x80;
+    pi4io_wr(s_e2, PI4IO_REG_OUT, s_e2_out);
+
+    /* INA226 battery monitor: power-down mode (ina226_init() restarts it) */
+    if (s_ina) {
+        ina226_wr(INA226_REG_CONFIG, INA226_CFG_OFF);
+    }
+#endif
+}
+
+esp_err_t bsp_battery_read(bsp_battery_t *bat)
+{
+#if defined(BSP_BOARD_M5STACK_TAB5)
+    if (!s_ina) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    uint16_t bus, shunt;
+    esp_err_t e = ina226_rd(INA226_REG_BUS, &bus);
+    if (e == ESP_OK) {
+        e = ina226_rd(INA226_REG_SHUNT, &shunt);
+    }
+    if (e != ESP_OK) {
+        return e;
+    }
+    /* 2S pack: per-cell mV = bus * 1.25 / 2 */
+    bat->cell_mv = bus * 5 / 8;
+    /* charge current reads negative: flip it, so + = charging */
+    bat->current_ma = -(int16_t)shunt / 2;
+    /* with no pack fitted the battery node sits near 0 V */
+    bat->present = bat->cell_mv >= 2500;
+    /* M5Unified's Tab5 battery level: linear, 3.3 V .. 4.15 V per cell */
+    int pct = (bat->cell_mv - 3300) * 100 / (4150 - 3300);
+    bat->percent = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+    return ESP_OK;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+void bsp_c6_power(bool on)
+{
+#if defined(BSP_BOARD_M5STACK_TAB5)
+    if (!s_e2) {
+        return;
+    }
+    s_e2_out = on ? (s_e2_out | E2_WLAN_PWR_EN) : (s_e2_out & ~E2_WLAN_PWR_EN);
+    pi4io_wr(s_e2, PI4IO_REG_OUT, s_e2_out);
+#endif
+}
+
+void bsp_power_off(void)
+{
+#if defined(BSP_BOARD_M5STACK_TAB5)
+    if (!s_e2) {
+        return;
+    }
+    /* PWROFF_PULSE (E2 P4): ten pulses, 50 ms apart, as M5Unified's
+     * Power_Class::powerOff() does for the Tab5. On battery the power path
+     * cuts the supply during this and nothing after it runs. On USB the
+     * board stays powered and this returns. */
+    for (int i = 0; i < 10; i++) {
+        pi4io_wr(s_e2, PI4IO_REG_OUT, 0x80 | E2_PWROFF_PULSE);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        pi4io_wr(s_e2, PI4IO_REG_OUT, 0x80);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 #endif
 }

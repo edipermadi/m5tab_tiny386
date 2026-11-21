@@ -273,6 +273,8 @@ static u8 pc_io_read(void *o, int addr)
 		val = 0;
 		emulink_data_read_string(pc->emulink, &val, 1, 1);
 		return val;
+	case 0x8902: case 0x8903:
+		return pc->host_power >> ((addr - 0x8902) * 8);
 	default:
 		//fprintf(stderr, "in 0x%x <= 0x%x\n", addr, 0xff);
 		return 0xff;
@@ -305,6 +307,8 @@ static u16 pc_io_read16(void *o, int addr)
 		return val;
 	case 0x220:
 		return adlib_read(pc->adlib, addr);
+	case 0x8902:
+		return pc->host_power;
 	default:
 		fprintf(stderr, "inw 0x%x <= 0x%x\n", addr, 0xffff);
 		return 0xffff;
@@ -887,6 +891,7 @@ PC *pc_new(SimpleFBDrawFunc *redraw, void *redraw_data,
 	pc->pcspk = pcspk_init(pc->pit);
 	pc->port92 = 0x2;
 	pc->shutdown_state = 0;
+	pc->host_power = PC_POWER_DEFAULT;
 	pc->reset_request = 0;
 	return pc;
 }

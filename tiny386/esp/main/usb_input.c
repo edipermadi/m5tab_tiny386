@@ -330,16 +330,32 @@ void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
 
         if (dev_params.proto != HID_PROTOCOL_NONE)
         {
-            ESP_ERROR_CHECK(hid_host_device_open(hid_device_handle, &dev_config));
+            /* a device that cannot be set up (out of memory, odd device)
+               is skipped: logged, not fatal */
+            esp_err_t err = hid_host_device_open(hid_device_handle, &dev_config);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "cannot open the %s: %s",
+                         hid_proto_name_str[dev_params.proto], esp_err_to_name(err));
+                break;
+            }
             if (HID_SUBCLASS_BOOT_INTERFACE == dev_params.sub_class)
             {
-                ESP_ERROR_CHECK(hid_class_request_set_protocol(hid_device_handle, HID_REPORT_PROTOCOL_BOOT));
-                if (HID_PROTOCOL_KEYBOARD == dev_params.proto)
+                err = hid_class_request_set_protocol(hid_device_handle, HID_REPORT_PROTOCOL_BOOT);
+                if (err == ESP_OK && HID_PROTOCOL_KEYBOARD == dev_params.proto)
                 {
-                    ESP_ERROR_CHECK(hid_class_request_set_idle(hid_device_handle, 0, 0));
+                    err = hid_class_request_set_idle(hid_device_handle, 0, 0);
+                }
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "%s: boot protocol setup: %s",
+                             hid_proto_name_str[dev_params.proto], esp_err_to_name(err));
                 }
             }
-            ESP_ERROR_CHECK(hid_host_device_start(hid_device_handle));
+            err = hid_host_device_start(hid_device_handle);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "cannot start the %s: %s",
+                         hid_proto_name_str[dev_params.proto], esp_err_to_name(err));
+                hid_host_device_close(hid_device_handle);
+            }
         }
         break;
     default:

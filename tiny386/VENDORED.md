@@ -20,6 +20,15 @@ port can change it.
 - `ne2000.c`: on a chip without Wi-Fi (`!SOC_WIFI_SUPPORTED`, the ESP32-P4)
   the NIC's MAC is the chip's base MAC, locally administered, instead of the
   Wi-Fi station MAC it does not have.
+- `pc.c`, `pc.h`: `PC.host_power`, read at port 0x8902, carries the host's
+  battery status (charge level, AC, charging) for the BIOS. The Tab5 code
+  fills it from the battery monitor (`main/esp_main.c`).
+- `esp/main/usb_input.c`: a USB HID device that cannot be opened or started
+  (out of memory, say) is logged and skipped instead of aborting.
+- `misc.c`: the CMOS clock is local time (`localtime_r`), as DOS and Windows
+  expect, instead of UTC; with no TZ set the two are the same.
+- `seabios/patch`: APM "get power status" (INT 15h AX=530Ah) reports
+  `PC.host_power` instead of "AC, no battery".
 
 ## Updating from upstream
 

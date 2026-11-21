@@ -1,5 +1,5 @@
 diff --git a/src/apm.c b/src/apm.c
-index f7c2306c..1778c003 100644
+index f7c2306c..93340151 100644
 --- a/src/apm.c
 +++ b/src/apm.c
 @@ -86,12 +86,25 @@ handle_155306(struct bregs *regs)
@@ -43,6 +43,50 @@ index f7c2306c..1778c003 100644
          break;
      case 3:
          apm_shutdown();
+@@ -126,16 +141,37 @@ handle_155308(struct bregs *regs)
+     set_success(regs);
+ }
+ 
++// Host power status (tiny386): 16-bit read; battery percent in the low byte
++// (0xff = unknown), bit 8 AC on line, bit 9 charging, bit 15 no battery.
++// 0xffff from an emulator without the port.
++#define PORT_BIOS_POWER 0x8902
++#define POWER_AC_ONLINE  0x0100
++#define POWER_CHARGING   0x0200
++#define POWER_NO_BATTERY 0x8000
++
+ // Get Power Status
+ static void
+ handle_15530a(struct bregs *regs)
+ {
+-    regs->bh = 0x01; // on line
+-    regs->bl = 0xff; // unknown battery status
+-    regs->ch = 0x80; // no system battery
+-    regs->cl = 0xff; // unknown remaining time
+-    regs->dx = 0xffff; // unknown remaining time
+-    regs->si = 0x00; // zero battery
++    u16 st = inw(PORT_BIOS_POWER);
++    if (st == 0xffff || (st & POWER_NO_BATTERY)) {
++        regs->bh = (st == 0xffff || (st & POWER_AC_ONLINE)) ? 0x01 : 0x00;
++        regs->bl = 0xff; // unknown battery status
++        regs->ch = 0x80; // no system battery
++        regs->cl = 0xff; // unknown remaining time
++        regs->dx = 0xffff; // unknown remaining time
++        regs->si = 0x00; // zero battery
++        set_success(regs);
++        return;
++    }
++    u8 pct = st & 0xff;
++    u8 level = pct == 0xff ? 0xff : pct >= 25 ? 0 : pct >= 10 ? 1 : 2;
++    regs->bh = (st & POWER_AC_ONLINE) ? 0x01 : 0x00;
++    regs->bl = (st & POWER_CHARGING) ? 0x03 : level; // high/low/critical/charging
++    regs->ch = (level == 0xff ? 0 : 1 << level) | ((st & POWER_CHARGING) ? 0x08 : 0);
++    regs->cl = pct;       // remaining percent
++    regs->dx = 0xffff;    // unknown remaining time
++    regs->si = 0x01;      // one battery
+     set_success(regs);
+ }
+ 
 diff --git a/src/block.h b/src/block.h
 index 3af2d716..46cb96ae 100644
 --- a/src/block.h

@@ -43,9 +43,11 @@ menu "tiny386 on M5Stack Tab5"
             When the guest turns the PC off through APM (Windows 9x "Shut
             down" with APM support installed, or a DOS power-off tool):
             speaker, panel and backlight off, USB-A 5V, EXT5V and the
-            ESP32-C6 off, and the ESP32-P4 into deep sleep with no wake-up
-            source. The reset button then powers it back on. The charger
-            stays enabled.
+            ESP32-C6 off, then the power-off pulse. On battery that cuts
+            the power and the side power button turns it back on. On USB
+            power the board stays powered, so the ESP32-P4 goes into deep
+            sleep with no wake-up source and the reset button powers it
+            back on. The charger stays enabled.
 
     config TAB5_BACKLIGHT_PERCENT
         int "Backlight brightness (%)"
@@ -128,5 +130,31 @@ menu "tiny386 on M5Stack Tab5"
     config TAB5_USB_HOST
         bool "USB host on the USB-A port (mouse, keyboard)"
         default y
+
+    config TAB5_NTP_SERVER
+        string "NTP server"
+        default "pool.ntp.org"
+        help
+            Where the time comes from once Wi-Fi is connected. The Wi-Fi
+            network and the timezone are set over the USB-C console with
+            tools/tab5ctl.py and kept in NVS.
+
+    config TAB5_TIME_WAIT_S
+        int "Longest wait for the network time at boot (s)"
+        range 5 120
+        default 30
+        help
+            With a Wi-Fi network saved, boot connects, gets the time, then
+            switches Wi-Fi and the ESP32-C6 off and starts the PC. Without
+            the time after this long, it carries on without it.
+
+    config TAB5_SERIAL_FS
+        bool "SD card file access over the USB-C console"
+        default y
+        help
+            List, pull, push and rename files on the microSD card from a
+            computer, with tools/tab5ctl.py, over the USB-C port's serial
+            console while the emulator runs. Disk images the emulator has
+            open cannot be replaced or renamed.
 
 endmenu

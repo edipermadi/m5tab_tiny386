@@ -74,6 +74,25 @@ void bsp_audio_amp_set(bool on);
  * left on. For just before deep sleep. */
 void bsp_power_down(void);
 
+/* Tab5: the ESP32-C6 (Wi-Fi) supply, WLAN_PWR_EN. On from bsp_i2c_init(). */
+void bsp_c6_power(bool on);
+
+/* Tab5: cut the board's power (PWROFF_PULSE). Only takes effect on battery;
+ * on USB power it returns and the caller should deep sleep. Call after
+ * bsp_power_down(). */
+void bsp_power_off(void);
+
+/* Battery (INA226 on the SYS bus). current_ma: + = charging, - = the board
+ * running on the battery; |current_ma| <= 10 is idle (on USB, full or not
+ * charging). percent is from the cell voltage (M5Unified's 3.3-4.15 V line). */
+typedef struct {
+    bool present;
+    int cell_mv;
+    int current_ma;
+    int percent;
+} bsp_battery_t;
+esp_err_t bsp_battery_read(bsp_battery_t *bat);
+
 enum { BSP_DIAG_POWER, BSP_DIAG_PANEL, BSP_DIAG_TOUCH, BSP_DIAG_SLOTS };
 void bsp_diag_note(int slot, const char *fmt, ...);
 

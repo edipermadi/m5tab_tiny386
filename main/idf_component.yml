@@ -2,3 +2,6 @@ dependencies:
   idf:
     version: ">=6.0.0"
   usb_host_hid: "^1.0.1"
+  # Wi-Fi through the on-board ESP32-C6 over SDIO (main/net_tab5.c). A 3.x
+  # host also works with the C6's factory esp-hosted 1.x firmware.
+  espressif/esp_hosted: "~3.1.0"
