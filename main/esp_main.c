@@ -63,9 +63,21 @@ void *psmalloc(long size)
     return ret;
 }
 
+/* tiny386's large buffers (guest RAM, VGA RAM, the fast path's pre-decoding):
+ * from the pool while it has room, else from PSRAM outside it; (void *)-1, as
+ * mmap, if neither has the memory (pre-decoding then does without it). */
 void *bigmalloc(size_t size)
 {
-    return psmalloc(size);
+    long rounded = (size + 4095) / 4096 * 4096;
+    if (psram_off + rounded <= psram_len) {
+        return psmalloc(size);
+    }
+    void *p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    if (!p) {
+        fprintf(stderr, "bigmalloc: no PSRAM for %u bytes\n", (unsigned)size);
+        return (void *)-1;
+    }
+    return p;
 }
 
 static char *pcram;
@@ -141,7 +153,7 @@ typedef struct {
 static Console *console_init(void)
 {
     Console *c = calloc(1, sizeof(Console));
-    c->fb = bigmalloc(LCD_WIDTH * LCD_HEIGHT * 2);
+    c->fb = psmalloc(LCD_WIDTH * LCD_HEIGHT * 2);
     memset(c->fb, 0, LCD_WIDTH * LCD_HEIGHT * 2);
     return c;
 }
@@ -353,7 +365,15 @@ static void power_off_board(void)
 static void i386_task(void *arg)
 {
     struct esp_ini_config *config = arg;
-    ESP_LOGI(TAG, "i386 runs on core %d", esp_cpu_get_core_id());
+    ESP_LOGI(TAG, "i386 runs on core %d, CPU: %s", esp_cpu_get_core_id(),
+#if CONFIG_TAB5_CPU_FAST_PD
+             "fast path, pre-decoding"
+#elif CONFIG_TAB5_CPU_FAST_ON
+             "fast path"
+#else
+             "interpreter"
+#endif
+    );
     /* wait for the panel */
     xEventGroupWaitBits(global_event_group, BIT1, pdFALSE, pdFALSE, portMAX_DELAY);
     pc_main(config->filename);

@@ -1,0 +1,14 @@
+# The CPU fast path's TLB (32 KB) and scratch block do not fit in internal RAM
+# next to the 512 KB L2 cache: their .bss goes to PSRAM (needs
+# CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY). The hot entries stay in cache.
+# (esp_wifi has a scheme like this one, but its fragment is not linked here.)
+[scheme:tab5_extram_bss]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:tab5_tiny386_fast]
+archive: libmain.a
+entries:
+    if TAB5_CPU_FAST_ON = y || TAB5_CPU_FAST_PD = y:
+        fast (tab5_extram_bss)

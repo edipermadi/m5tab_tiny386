@@ -53,3 +53,6 @@ CONFIG_ESP_HOSTED_AUTO_CALL_INIT_BEFORE_APP_MAIN=n
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # SNTP asks as soon as there is an address (no random start-up delay): boot waits for it
 CONFIG_LWIP_SNTP_STARTUP_DELAY=n
+
+# lets main/linker.lf put the CPU fast path's .bss (TLB) in PSRAM
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y

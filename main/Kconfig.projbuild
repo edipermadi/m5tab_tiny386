@@ -36,6 +36,32 @@ menu "tiny386 on M5Stack Tab5"
             bool "Off: 1:1, centred"
     endchoice
 
+    choice TAB5_CPU_FAST
+        prompt "CPU emulation speed-up"
+        default TAB5_CPU_FAST_PD
+        help
+            tiny386's fast path (tiny386/fast/) in front of its interpreter:
+            common instructions run there, the rest goes to the interpreter.
+
+        config TAB5_CPU_FAST_OFF
+            bool "Off: plain interpreter"
+        config TAB5_CPU_FAST_ON
+            bool "Fast path"
+        config TAB5_CPU_FAST_PD
+            bool "Fast path with pre-decoding"
+            help
+                Hot code is also decoded once into blocks of micro-ops. The
+                fastest, and uses about 3 MB more PSRAM (outside the
+                emulator pool if the pool has no room). If that memory
+                cannot be had, it runs as "Fast path".
+    endchoice
+
+    config TAB5_CPU_FAST_PD_KB
+        int "Memory for pre-decoded blocks (KB)"
+        depends on TAB5_CPU_FAST_PD
+        range 256 8192
+        default 2048
+
     config TAB5_POWEROFF_ON_SHUTDOWN
         bool "Switch the Tab5 off when the guest shuts down"
         default y

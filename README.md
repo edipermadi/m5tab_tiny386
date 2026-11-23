@@ -29,6 +29,7 @@ Options in `idf.py menuconfig` → *tiny386 on M5Stack Tab5*:
 |---|---|
 | Screen orientation (landscape 90 or 270). Switch it if the picture is upside down with the keyboard attached. | 270 |
 | Backlight brightness | 60 % |
+| CPU emulation speed-up: tiny386's fast path in front of the interpreter, optionally with pre-decoding of hot code (about 3 MB more PSRAM) | fast path with pre-decoding |
 | PSRAM pool for the emulator | 24 MB |
 | Tab5 Keyboard I2C port, SDA, SCL, address | port 0, G0, G1, 0x6D |
 | USB host on the USB-A port | on |

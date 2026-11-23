@@ -30,6 +30,14 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION AND
     endif()
 endif()
 
+# The CPU: i386.c alone, or fast/fast.c, which includes i386.c and puts
+# tiny386's fast path in front of it (menuconfig: "CPU emulation speed-up").
+if(CONFIG_TAB5_CPU_FAST_ON OR CONFIG_TAB5_CPU_FAST_PD)
+    set(T386_CPU "${T386}/fast/fast.c")
+else()
+    set(T386_CPU "${T386}/i386.c")
+endif()
+
 idf_component_register(
     SRCS
         "esp_main.c"
@@ -52,7 +60,7 @@ idf_component_register(
         "${T386}/adlib.c"
         "${T386}/fmopl.c"
         "${T386}/fpu.c"
-        "${T386}/i386.c"
+        "${T386_CPU}"
         "${T386}/i8042.c"
         "${T386}/i8254.c"
         "${T386}/i8259.c"
@@ -68,6 +76,7 @@ idf_component_register(
         "${T386}/sb16.c"
         "${T386}/pcspk.c"
     INCLUDE_DIRS "." "${T386}/esp/main" "${FMOPL_GEN_DIR}"
+    LDFRAGMENTS "linker.lf"
     REQUIRES
         esp_lcd esp_driver_i2c esp_driver_i2s esp_driver_ledc esp_driver_gpio
         esp_driver_sdmmc esp_driver_uart esp_driver_usb_serial_jtag
@@ -89,5 +98,13 @@ set_source_files_properties(
     PROPERTIES COMPILE_OPTIONS "-Wno-all")
 set_source_files_properties("${T386}/fmopl.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-all;-fsingle-precision-constant")
-set_source_files_properties("${T386}/i386.c" "${T386}/vga.c" "${T386}/pc.c"
+if(CONFIG_TAB5_CPU_FAST_ON OR CONFIG_TAB5_CPU_FAST_PD)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE USE_FAST)
+endif()
+if(CONFIG_TAB5_CPU_FAST_PD)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        FAST_PD "FAST_PD_SIZE=(${CONFIG_TAB5_CPU_FAST_PD_KB}*1024)")
+endif()
+
+set_source_files_properties("${T386_CPU}" "${T386}/vga.c" "${T386}/pc.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-all;-O3")
